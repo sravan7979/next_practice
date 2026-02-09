@@ -25,7 +25,7 @@ npm install mongoose
 Create a `.env.local` (Next.js) or `.env` file:
 
 ``` env
-MONGO_URI=mongodb+srv://username:password@cluster.mongodb.net/dbname
+MONGO_URI=<mongodb+srv://username:password@cluster.mongodb.net/dbname>
 ```
 
 This keeps **credentials secure** and configurable.
