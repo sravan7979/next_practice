@@ -1,4 +1,4 @@
-import dbConnect from '@/lib/mongodb'
+import connectDB from '@/lib/mongodb'
 import { NextRequest, NextResponse } from "next/server";
 import {v2 as cloudinary} from 'cloudinary';
 import { Event } from "@/database";
@@ -6,7 +6,7 @@ import { Event } from "@/database";
 
 export async function POST(req: NextRequest) {
     try {
-        await dbConnect();
+        await connectDB();
 
         const formData = await req.formData();
 
@@ -56,7 +56,7 @@ export async function POST(req: NextRequest) {
 
 export async function GET(req: NextRequest) {
     try {
-        await dbConnect();
+        await connectDB();
 
         const events = await Event.find().sort({createdAt: -1});
 
