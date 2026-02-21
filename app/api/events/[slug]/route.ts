@@ -1,148 +1,83 @@
-import type { NextRequest } from 'next/server';
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 
-import dbConnect from '@/lib/mongodb';
-import { Event } from '@/database';
-import type { IEvent } from '@/database/event.model';
+import connectDB from '@/lib/mongodb';
+import Event, { IEvent } from '@/database/event.model';
 
-type RouteContext = {
-  params: {
-    slug?: string;
-  };
+// Define route params type for type safety
+type RouteParams = {
+  params: Promise<{
+    slug: string;
+  }>;
 };
-
-type ApiErrorResponse = {
-  ok: false;
-  message: string;
-};
-
-type EventResponse = {
-  _id: string;
-  title: IEvent['title'];
-  slug: IEvent['slug'];
-  description: IEvent['description'];
-  overview: IEvent['overview'];
-  image: IEvent['image'];
-  venue: IEvent['venue'];
-  location: IEvent['location'];
-  date: IEvent['date'];
-  time: IEvent['time'];
-  mode: IEvent['mode'];
-  audience: IEvent['audience'];
-  agenda: IEvent['agenda'];
-  organizer: IEvent['organizer'];
-  tags: IEvent['tags'];
-  createdAt: string;
-  updatedAt: string;
-};
-
-type ApiSuccessResponse = {
-  ok: true;
-  message: string;
-  event: EventResponse;
-};
-
-const SLUG_REGEX = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-const SLUG_MAX_LENGTH = 120;
-
-function decodeAndValidateSlug(rawSlug: unknown): { ok: true; slug: string } | { ok: false; message: string } {
-  if (typeof rawSlug !== 'string') {
-    return { ok: false, message: 'Missing slug parameter.' };
-  }
-
-  // Route params are URL-encoded; decode safely to avoid throwing.
-  let decoded: string;
-  try {
-    decoded = decodeURIComponent(rawSlug);
-  } catch {
-    return { ok: false, message: 'Invalid slug encoding.' };
-  }
-
-  const slug = decoded.trim().toLowerCase();
-
-  if (!slug) {
-    return { ok: false, message: 'Slug is required.' };
-  }
-
-  if (slug.length > SLUG_MAX_LENGTH) {
-    return { ok: false, message: `Slug is too long (max ${SLUG_MAX_LENGTH} characters).` };
-  }
-
-  if (!SLUG_REGEX.test(slug)) {
-    return {
-      ok: false,
-      message: 'Invalid slug format. Use lowercase letters, numbers, and hyphens only.',
-    };
-  }
-
-  return { ok: true, slug };
-}
 
 /**
  * GET /api/events/[slug]
- * Fetch a single event by its unique slug.
+ * Fetches a single events by its slug
  */
-export async function GET(_req: NextRequest, context: RouteContext) {
-  const parsed = decodeAndValidateSlug(context?.params?.slug);
-  if (!parsed.ok) {
-    return NextResponse.json<ApiErrorResponse>({ ok: false, message: parsed.message }, { status: 400 });
-  }
-
+export async function GET(
+  req: NextRequest,
+  { params }: RouteParams
+): Promise<NextResponse> {
   try {
-    await dbConnect();
+    // Connect to database
+    await connectDB();
 
-    // Use `.exec()` for better typing and predictable behavior.
-    const eventDoc = await Event.findOne({ slug: parsed.slug }).exec();
+    // Await and extract slug from params
+    const { slug } = await params;
 
-    if (!eventDoc) {
-      return NextResponse.json<ApiErrorResponse>(
-        { ok: false, message: 'Event not found.' },
+    // Validate slug parameter
+    if (!slug || typeof slug !== 'string' || slug.trim() === '') {
+      return NextResponse.json(
+        { message: 'Invalid or missing slug parameter' },
+        { status: 400 }
+      );
+    }
+
+    // Sanitize slug (remove any potential malicious input)
+    const sanitizedSlug = slug.trim().toLowerCase();
+
+    // Query events by slug
+    const event = await Event.findOne({ slug: sanitizedSlug }).lean();
+
+    // Handle events not found
+    if (!event) {
+      return NextResponse.json(
+        { message: `Event with slug '${sanitizedSlug}' not found` },
         { status: 404 }
       );
     }
 
-    // Build a JSON-safe, stable response shape (ObjectId/Date -> string).
-    const event: EventResponse = {
-      _id: eventDoc._id.toString(),
-      title: eventDoc.title,
-      slug: eventDoc.slug,
-      description: eventDoc.description,
-      overview: eventDoc.overview,
-      image: eventDoc.image,
-      venue: eventDoc.venue,
-      location: eventDoc.location,
-      date: eventDoc.date,
-      time: eventDoc.time,
-      mode: eventDoc.mode,
-      audience: eventDoc.audience,
-      agenda: eventDoc.agenda,
-      organizer: eventDoc.organizer,
-      tags: eventDoc.tags,
-      createdAt: eventDoc.createdAt.toISOString(),
-      updatedAt: eventDoc.updatedAt.toISOString(),
-    };
-
-    return NextResponse.json<ApiSuccessResponse>(
-      { ok: true, message: 'Event fetched successfully.', event },
+    // Return successful response with events data
+    return NextResponse.json(
+      { message: 'Event fetched successfully', event },
       { status: 200 }
     );
-  } catch (error: unknown) {
-    // Avoid leaking internals; keep logs server-side.
-    console.error('GET /api/events/[slug] failed:', error);
-
-    // Handle common Mongoose errors explicitly (validation/cast, etc.).
-    if (error instanceof Error) {
-      const name = (error as { name?: string }).name;
-      if (name === 'ValidationError' || name === 'CastError') {
-        return NextResponse.json<ApiErrorResponse>(
-          { ok: false, message: 'Invalid request.' },
-          { status: 400 }
-        );
-      }
+  } catch (error) {
+    // Log error for debugging (only in development)
+    if (process.env.NODE_ENV === 'development') {
+      console.error('Error fetching events by slug:', error);
     }
 
-    return NextResponse.json<ApiErrorResponse>(
-      { ok: false, message: 'Unexpected server error.' },
+    // Handle specific error types
+    if (error instanceof Error) {
+      // Handle database connection errors
+      if (error.message.includes('MONGODB_URI')) {
+        return NextResponse.json(
+          { message: 'Database configuration error' },
+          { status: 500 }
+        );
+      }
+
+      // Return generic error with error message
+      return NextResponse.json(
+        { message: 'Failed to fetch events', error: error.message },
+        { status: 500 }
+      );
+    }
+
+    // Handle unknown errors
+    return NextResponse.json(
+      { message: 'An unexpected error occurred' },
       { status: 500 }
     );
   }
