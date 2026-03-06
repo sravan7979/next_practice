@@ -7,6 +7,8 @@ const ExploreBtn = () => {
     const handleExploreClick = () => {
         posthog.capture('explore_events_clicked', {
             button_location: 'homepage_hero',
+
+            
         });
     };
 
